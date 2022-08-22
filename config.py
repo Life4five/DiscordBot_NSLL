@@ -15,6 +15,7 @@ TOKEN = 'OTUwMDAyMDAzODg1NTU1Nzky.GhVKjz.PycQl0afPHDao6qXPWFWgjej9n74QUKmTV52kE'
 
 PREFIX = '$'
 SYSTEM_CHANNEL_ID = 815614417827397652  # channel where the messages will be sent ## admin-chat
+CURRENCY_SYMBOL = ':coin:'
 
 bot = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
 
