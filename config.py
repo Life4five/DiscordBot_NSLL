@@ -13,11 +13,23 @@ db.commit()
 
 TOKEN = 'OTUwMDAyMDAzODg1NTU1Nzky.GhVKjz.PycQl0afPHDao6qXPWFWgjej9n74QUKmTV52kE'
 
-PREFIX = '$'
-SYSTEM_CHANNEL_ID = 815614417827397652  # channel where the messages will be sent ## admin-chat
+PREFIX = ['!!', '$']
+SYSTEM_CHANNEL_ID = 815611328323911721  # channel where the messages will be sent ## admin-chat
 CURRENCY_SYMBOL = ':coin:'
 
+# Economy and commands cooldown (s)
+CD_WORK = 60
+CD_TOSS = 5
+#
+
 bot = commands.Bot(command_prefix=PREFIX, intents=discord.Intents.all())
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    await bot.process_commands(message)
 
 
 @bot.event
