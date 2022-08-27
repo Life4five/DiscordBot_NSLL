@@ -16,6 +16,7 @@ async def echo(ctx, *msg):
     await ctx.send(' '.join(msg))
 
 
+@commands.cooldown(1, 300, commands.BucketType.user)
 @bot.command(name='commands', description='Show all available commands', aliases=['cmds', 'ඞ'])
 async def cmds(ctx):
     embed = discord.Embed(title='All available commands', color=0)
@@ -34,6 +35,16 @@ async def clear(ctx, amount: int):
     await ctx.send(f'Cleared `{amount}` messages!', delete_after=3)
 
 
+@commands.has_permissions(administrator=True)
+@bot.command(description="Add role(s) to all members")
+async def add_roles_to_all(ctx, *roles: discord.Role):
+    print('add role to all users')
+    for u in ctx.guild.members:
+        await u.add_roles(*roles)
+        await asyncio.sleep(1)
+    await ctx.send('Success')
+
+
 # Database and economy
 @commands.has_permissions(administrator=True)
 @bot.command(description='**[ADMIN ONLY]** SQL queries executing')
@@ -48,7 +59,7 @@ async def sql(ctx, *query):
         await ctx.send(result)
 
 
-@commands.has_permissions(administrator=True)  # TODO: Update database, not reset
+@commands.has_permissions(administrator=True)
 @bot.command(description='**[ADMIN ONLY]** Updates the database', aliases=['reset-database'])
 async def update_users(ctx):
     guild = bot.get_guild(606208697328467969)
@@ -100,13 +111,15 @@ async def balance(ctx, user: discord.Member = 0):
     await ctx.send(embed=embed)
 
 
-@bot.command(description='The most rich members')
+@bot.command(description='The best users!')
 async def top(ctx, users: int = 10):
     embed = discord.Embed(title=f'Top {users} members', description='All time', color=0xFFD700)
-    cursor.execute(f"SELECT Nickname, Balance, Level FROM users ORDER BY Balance DESC, Level DESC LIMIT {users}")
+    cursor.execute(f"SELECT Nickname, Balance, Exp, Level FROM users ORDER BY Exp DESC, Balance DESC LIMIT {users}")
     users_stats = cursor.fetchall()
-    for user, user_bal, user_level in users_stats:
-        embed.add_field(name=f'{user}', value=f'{COIN} {"{:,}".format(user_bal)} | 🔰 {user_level}', inline=False)
+    for user, user_bal, user_exp, user_level in users_stats:
+        embed.add_field(name=f'{user}',
+                        value=f'{user_level} 🔰 {"{:,}".format(user_exp)} | {COIN} {"{:,}".format(user_bal)}',
+                        inline=False)
     await ctx.send(embed=embed)
 
 
@@ -165,7 +178,7 @@ def get_random_calc():
     return num1, op1, num2, op2, num3, res
 
 
-async def confirm_act(m, ctx):
+async def confirm_act(ctx):
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
 
@@ -204,7 +217,7 @@ async def work(ctx):
             ctx.command.reset_cooldown(ctx)
             return
 
-    if answer != problem[5]:
+    if answer != problem[5]:  # problem[5] is correct answer on math problem
         await ctx.send(f'Wrong answer. It was `{problem[5]}`')
         return
     income = random.randint(1900, 2100)
@@ -219,7 +232,7 @@ async def work(ctx):
 @bot.command(description='Give your money to friend!')
 async def pay(ctx, user: discord.Member, amount):
     if amount == 'all':
-        if not await confirm_act(ctx.message, ctx):
+        if not await confirm_act(ctx):
             return
         amount = get_bal(ctx.author)
     amount = int(amount)
@@ -237,7 +250,6 @@ async def pay(ctx, user: discord.Member, amount):
 
 
 # Crime money income
-
 # TODO: Rob Command
 
 # Games
@@ -245,7 +257,7 @@ async def pay(ctx, user: discord.Member, amount):
 @bot.command(description='Toss the coin, 50% chance')
 async def toss(ctx, bet):
     if bet == 'all':
-        if not await confirm_act(ctx.message, ctx):
+        if not await confirm_act(ctx):
             return
         bet = get_bal(ctx.author)
     bet = abs(int(bet))
@@ -270,11 +282,26 @@ async def toss(ctx, bet):
         await ctx.send(embed=embed)
 
 
+# TODO: Roulette command
+
+
+# TODO: Slot-Machine command with Jackpot
+
+
 # Items and shop
+# TODO: Need to stack items if they exist
 def give_items(receiver: discord.Member, item_id: int, quantity: int):
     item = cursor.execute(f"SELECT * FROM shop WHERE item_id = {item_id}").fetchall()[0]
-    id, name, description, price, item_type = item[0], item[1], item[2], item[3], item[5]
-    cursor.execute(f"INSERT INTO 'u{receiver.id}' VALUES (?, ?, ?, ?, ?)", (id, item_type, name, description, quantity))
+    shop_id, shop_name, shop_description, shop_price, shop_type = item[0], item[1], item[2], item[3], item[5]
+    inv_item = cursor.execute(f"SELECT * FROM 'u{receiver.id}' WHERE Item_id = {shop_id}").fetchall()
+    print(inv_item)
+    if not inv_item:
+        cursor.execute(
+            f"""INSERT INTO 'u{receiver.id}'
+                VALUES ({shop_id}, '{shop_type}', '{shop_name}', '{shop_description}', {quantity})""")
+    else:
+        cursor.execute(
+            f"UPDATE 'u{receiver.id}' set Quantity = Quantity + {quantity} WHERE Item_id = {shop_id}")
     db.commit()
 
 
@@ -289,7 +316,6 @@ async def shop(ctx):
         name = item[1]
         description = item[2]
         price = item[3]
-        stock = item[4]
         embed.add_field(name=f'[{id}] {COIN} {price} — {name}',
                         value=f'{description}',
                         inline=False)
@@ -315,7 +341,7 @@ async def inventory(ctx, user: discord.Member = 0):
     await ctx.send(embed=embed)
 
 
-@bot.command(desciption="Let's purchase some stuff", aliases=['buy-item'])
+@bot.command(description="Let's purchase some stuff", aliases=['buy-item'])
 async def buy_item(ctx, item_id, quantity: int = 1):
     quantity = abs(quantity)
     if quantity == 0:
@@ -329,6 +355,42 @@ async def buy_item(ctx, item_id, quantity: int = 1):
     give_items(ctx.author, item_id, quantity)
     embed = discord.Embed(title="Successful purchase",
                           description=f'You bought {quantity} items for {COIN} {item_price}')
+    await ctx.send(embed=embed)
+
+
+# TODO: use-item command
+@bot.command(description="Use item to get all its benefits", aliases=['use-item'])
+async def use_item(ctx, item_id: int, quantity: int):
+    pass
+
+
+# Level system
+def get_exp(user: discord.Member):
+    return cursor.execute(f"SELECT Exp FROM users WHERE User_id = {user.id}").fetchone()[0]
+
+
+def trans_exp(receiver: discord.Member, amount: int):
+    cursor.execute(f"UPDATE users set Exp = Exp + {amount} WHERE User_id = {receiver.id}")
+    db.commit()
+
+
+# TODO: Make embed more informative
+@commands.has_permissions(administrator=True)
+@bot.command(description='Know your experience', aliases=['exp'])
+async def experience(ctx):
+    user_exp = get_exp(ctx.author)
+    embed = discord.Embed(title='Your experience:', description=f'🔰 {"{:,}".format(user_exp)}', color=0x800080)
+    await ctx.send(embed=embed)
+
+
+@commands.has_permissions(administrator=True)
+@bot.command(description='Give / take experience to user', aliases=['transfer-exp', 'te'])
+async def transfer_exp(ctx, user: discord.Member, amount: int):
+    trans_exp(user, amount)
+    user_exp = get_exp(user)
+    embed = discord.Embed(title='Experience was transferred!', description=f'Experience {user.mention}:\n'
+                                                                           f'🔰 {"{:,}".format(user_exp)}',
+                          color=0x800080)
     await ctx.send(embed=embed)
 
 
