@@ -49,5 +49,8 @@ async def on_disconnect():
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("```You are missing Administrator permission(s) to run this command.```")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send('```You are missing some argument. Type `$help command_name` for more info```')
     else:
         await ctx.send(error)
+        print(error)

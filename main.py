@@ -43,18 +43,30 @@ async def sql(ctx, *query):
         result += str(i) + '\n'
     if result == '':
         await ctx.send("Query success")
+        db.commit()
     else:
         await ctx.send(result)
 
 
 @commands.has_permissions(administrator=True)  # TODO: Update database, not reset
 @bot.command(description='**[ADMIN ONLY]** Updates the database', aliases=['reset-database'])
-async def reset_database(ctx):
+async def update_users(ctx):
     guild = bot.get_guild(606208697328467969)
     for member in guild.members:
         if member.bot:
             continue
-        cursor.execute(f"INSERT INTO users VALUES (?, ?, ?, ?)", (member.id, member.name, 0, 0))
+        cursor.execute(f"""
+            INSERT INTO users(User_id, Nickname, Balance, Level)
+            SELECT {member.id}, '{member}', 0, 0
+            WHERE NOT EXISTS(SELECT User_id FROM users WHERE User_id = {member.id})
+        """)
+        cursor.execute(f"""CREATE TABLE IF NOT EXISTS 'u{member.id}' (
+            Item_id integer,
+            Type text,
+            Item_name text,
+            Item_description text,
+            Quantity int
+        )""")
     db.commit()
     await ctx.send("Database successfully restored!")
 
@@ -73,7 +85,7 @@ async def server_stats(ctx):
     bank_bal = cursor.execute("SELECT * FROM server").fetchone()[0]
     members_bal = sum([x[0] for x in cursor.execute("SELECT Balance FROM users").fetchall()])
     both_bal = bank_bal + members_bal
-    embed = discord.Embed(title='Server stats', description='All budget of the server', color=0)
+    embed = discord.Embed(title='Server stats', description='All budget of the server', color=0xFFD700)
     embed.add_field(name='Bank', value=f'{COIN} {"{:,}".format(bank_bal)}', inline=True)
     embed.add_field(name='Members', value=f'{COIN} {"{:,}".format(members_bal)}', inline=True)
     embed.add_field(name='Both', value=f'{COIN} {"{:,}".format(both_bal)}', inline=True)
@@ -82,7 +94,7 @@ async def server_stats(ctx):
 
 @bot.command(description='Know your balance', aliases=['bal', 'ифд', 'ифдфтсу'])
 async def balance(ctx, user: discord.Member = 0):
-    cursor.execute(f"SELECT Balance FROM users WHERE id = {user.id if user != 0 else ctx.author.id}")
+    cursor.execute(f"SELECT Balance FROM users WHERE User_id = {user.id if user != 0 else ctx.author.id}")
     user_bal = cursor.fetchone()[0]
     embed = discord.Embed(title='Your balance:', description=f'{COIN} {"{:,}".format(user_bal)}', color=0xFFD700)
     await ctx.send(embed=embed)
@@ -110,21 +122,21 @@ async def transfer_money(ctx, user: discord.Member, amount):
 
 
 def trans_money(user: discord.Member, amount: int):
-    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE id = {user.id}")
+    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE User_id = {user.id}")
     cursor.execute(f"UPDATE server set Bank = Bank - {amount}")
     db.commit()
 
 
 def pay_money(payer: discord.Member, receiver: discord.Member, amount: int):
     amount = abs(amount)
-    cursor.execute(f"UPDATE users set Balance = Balance - {amount} WHERE id = {payer.id}")
-    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE id = {receiver.id}")
+    cursor.execute(f"UPDATE users set Balance = Balance - {amount} WHERE User_id = {payer.id}")
+    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE User_id = {receiver.id}")
 
     db.commit()
 
 
 def get_bal(user: discord.Member):
-    cursor.execute(f"SELECT Balance FROM users WHERE id = {user.id}")
+    cursor.execute(f"SELECT Balance FROM users WHERE User_id = {user.id}")
     return cursor.fetchone()[0]
 
 
@@ -173,22 +185,24 @@ async def confirm_act(m, ctx):
 async def work(ctx):
     problem = get_random_calc()
     solve = '{} {} {} {} {} = ?'.format(problem[0], problem[1], problem[2], problem[3], problem[4])
+    answer = ''
     await ctx.send(solve)
 
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
 
-    try:
-        answer = await bot.wait_for('message', timeout=60, check=check)
-        answer = int(answer.content)
-    except ValueError:
-        await ctx.send('Invalid value!')
-        ctx.command.reset_cooldown(ctx)
-        return
-    except asyncio.TimeoutError:
-        ctx.send('Timeout')
-        ctx.command.reset_cooldown(ctx)
-        return
+    valid = False
+    while not valid:
+        try:
+            answer = await bot.wait_for('message', timeout=60, check=check)
+            answer = int(answer.content)
+            valid = True
+        except ValueError:
+            await ctx.send('Invalid value!')
+        except asyncio.TimeoutError:
+            await ctx.send('Timeout')
+            ctx.command.reset_cooldown(ctx)
+            return
 
     if answer != problem[5]:
         await ctx.send(f'Wrong answer. It was `{problem[5]}`')
@@ -256,27 +270,66 @@ async def toss(ctx, bet):
         await ctx.send(embed=embed)
 
 
-# shop
-@bot.command(description='Shows all goods in the shop')
+# Items and shop
+def give_items(receiver: discord.Member, item_id: int, quantity: int):
+    item = cursor.execute(f"SELECT * FROM shop WHERE item_id = {item_id}").fetchall()[0]
+    id, name, description, price, item_type = item[0], item[1], item[2], item[3], item[5]
+    cursor.execute(f"INSERT INTO 'u{receiver.id}' VALUES (?, ?, ?, ?, ?)", (id, item_type, name, description, quantity))
+    db.commit()
+
+
+@bot.command(description='Shows all items in the server')
 async def shop(ctx):
-    embed = discord.Embed(title='Shop', description='All items', color=0)
-    cursor.execute("SELECT * FROM shop")
-    shop_items = cursor.fetchall()
-    for item in shop_items:
+    embed = discord.Embed(title='Items', description='Buy an item with the `buy-item <id> [quantity]` command.',
+                          color=0)
+    all_items = cursor.execute("SELECT * FROM shop").fetchall()
+
+    for item in all_items:
         id = item[0]
         name = item[1]
-        price = item[2]
-        description = item[3]
+        description = item[2]
+        price = item[3]
         stock = item[4]
-        embed.add_field(name=f'[{id}] {COIN} {price} — {name}. В наличии: `{stock}`',
+        embed.add_field(name=f'[{id}] {COIN} {price} — {name}',
                         value=f'{description}',
                         inline=False)
     await ctx.send(embed=embed)
 
 
-@bot.command(desciption='')  # TODO: Need to write
-async def buy_item(ctx):
-    pass
+@bot.command(description='Show your inventory', aliases=['inv'])
+async def inventory(ctx, user: discord.Member = 0):
+    if user == 0:
+        user = ctx.author
+    inv_items = cursor.execute(f"SELECT * FROM 'u{user.id}'").fetchall()  # TODO: Something with quotes
+    embed = discord.Embed(title='Inventory', description=f'There are {len(inv_items)} items',
+                          color=0)
+    for inv_item in inv_items:
+        inv_item_id = inv_item[0]
+        inv_item_type = inv_item[1]
+        inv_item_name = inv_item[2]
+        inv_item_description = inv_item[3]
+        inv_item_quantity = inv_item[4]
+        embed.add_field(name=f'[{inv_item_id}] [{inv_item_type}] {inv_item_name}, `{inv_item_quantity}` шт',
+                        value=f'{inv_item_description}',
+                        inline=False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(desciption="Let's purchase some stuff", aliases=['buy-item'])
+async def buy_item(ctx, item_id, quantity: int = 1):
+    quantity = abs(quantity)
+    if quantity == 0:
+        await ctx.send("You can't buy zero items")
+        return
+    item_price = cursor.execute(f"SELECT Price FROM shop WHERE item_id = {item_id}").fetchone()[0] * quantity
+    if check_bal(ctx.author, item_price):
+        await not_enough_money(ctx)
+        return
+    trans_money(ctx.author, -item_price)
+    give_items(ctx.author, item_id, quantity)
+    embed = discord.Embed(title="Successful purchase",
+                          description=f'You bought {quantity} items for {COIN} {item_price}')
+    await ctx.send(embed=embed)
 
 
 bot.run(cfg.TOKEN)
