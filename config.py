@@ -15,6 +15,7 @@ db.commit()
 TOKEN = 'OTUwMDAyMDAzODg1NTU1Nzky.GhVKjz.PycQl0afPHDao6qXPWFWgjej9n74QUKmTV52kE'
 
 PREFIX = ['!', '$']
+GUILD_ID = 606208697328467969
 SUPERADMIN_ID = 412488420460462091  # For superpower commands
 SYSTEM_CHANNEL_ID = 815611328323911721  # channel where the messages will be sent ## admin-chat
 CURRENCY_SYMBOL = ':coin:'
@@ -39,7 +40,7 @@ async def on_ready():
     sys_channel = bot.get_channel(SYSTEM_CHANNEL_ID)
 
     print(f'{bot.user} is working!')
-    await sys_channel.send(f'{bot.user.mention} is working!')
+    await sys_channel.send(f'{bot.user.mention} is working!', delete_after=120)
 
 
 @bot.event
@@ -53,6 +54,8 @@ async def on_command_error(ctx, error):
         await ctx.send("```You are missing Administrator permission(s) to run this command.```")
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f'You are missing some arguments. Type `$help {ctx.command.name}` for more info')
+    elif isinstance(error, TypeError):
+        await ctx.send(f"Error: Object not found")
     elif isinstance(error, commands.CommandOnCooldown):
         time_left = error.retry_after
         bot_reply = await ctx.send(f"Cooldown. Try again in `{round(time_left)}s`")

@@ -1,14 +1,73 @@
 import discord
 import config as cfg
-from config import bot
-from config import cursor, db
+from config import cursor, db, bot
 from config import CURRENCY_SYMBOL as COIN
-from discord.ext import commands
+from discord.ext import tasks, commands
 import random
 import asyncio
+import io
+import aiohttp
+import os
+from datetime import datetime
 
 
 # Commands
+def trans_money(user: discord.Member, amount: int):
+    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE User_id = {user.id}")
+    cursor.execute(f"UPDATE server set Bank = Bank - {amount}")
+    db.commit()
+
+
+def pay_money(payer: discord.Member, receiver: discord.Member, amount: int):
+    amount = abs(amount)
+    trans_money(payer, -amount)
+    trans_money(receiver, amount)
+
+
+def get_bal(user: discord.Member):
+    cursor.execute(f"SELECT Balance FROM users WHERE User_id = {user.id}")
+    return cursor.fetchone()[0]
+
+
+def check_bal(user: discord.Member, amount):
+    user_bal = get_bal(user)
+    if user_bal < amount or user_bal == 0:
+        return True  # True, not enough money
+    else:
+        return False  # False, money is enough
+
+
+async def not_enough_money(ctx):
+    embed = discord.Embed(title='Not enough money!',
+                          description=f'Your balance:\n {COIN} {"{:,}".format(get_bal(ctx.author))}')
+    await ctx.send(embed=embed)
+
+
+def get_random_calc():
+    ops = ['+', '-', '*']
+    num1 = str(random.randint(1, 10))
+    num2 = str(random.randint(5, 20))
+    num3 = str(random.randint(1, 10))
+    op1 = random.choice(ops)
+    op2 = random.choice(ops)
+    res = eval(num1 + op1 + num2 + op2 + num3)
+    return num1, op1, num2, op2, num3, res
+
+
+async def confirm_act(ctx):
+    def check(m):
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    await ctx.send('Are you sure? y / n')
+    try:
+        confirm = await bot.wait_for('message', timeout=60, check=check)
+        confirm = confirm.content
+    except asyncio.TimeoutError:
+        await ctx.send('Timeout')
+        confirm = 'n'
+    return confirm == 'y'
+
+
 # General
 @bot.command(description='Latency', aliases=['latency'])
 async def ping(ctx):
@@ -139,64 +198,6 @@ async def transfer_money(ctx, user: discord.Member, amount):
     await ctx.send(embed=embed)
 
 
-def trans_money(user: discord.Member, amount: int):
-    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE User_id = {user.id}")
-    cursor.execute(f"UPDATE server set Bank = Bank - {amount}")
-    db.commit()
-
-
-def pay_money(payer: discord.Member, receiver: discord.Member, amount: int):
-    amount = abs(amount)
-    cursor.execute(f"UPDATE users set Balance = Balance - {amount} WHERE User_id = {payer.id}")
-    cursor.execute(f"UPDATE users set Balance = Balance + {amount} WHERE User_id = {receiver.id}")
-
-    db.commit()
-
-
-def get_bal(user: discord.Member):
-    cursor.execute(f"SELECT Balance FROM users WHERE User_id = {user.id}")
-    return cursor.fetchone()[0]
-
-
-def check_bal(user: discord.Member, amount):
-    user_bal = get_bal(user)
-    if user_bal < amount or user_bal == 0:
-        return True  # True, not enough money
-    else:
-        return False  # False, money is enough
-
-
-async def not_enough_money(ctx):
-    embed = discord.Embed(title='Not enough money!',
-                          description=f'Your balance:\n {COIN} {"{:,}".format(get_bal(ctx.author))}')
-    await ctx.send(embed=embed)
-
-
-def get_random_calc():
-    ops = ['+', '-', '*']
-    num1 = str(random.randint(1, 10))
-    num2 = str(random.randint(5, 20))
-    num3 = str(random.randint(1, 10))
-    op1 = random.choice(ops)
-    op2 = random.choice(ops)
-    res = eval(num1 + op1 + num2 + op2 + num3)
-    return num1, op1, num2, op2, num3, res
-
-
-async def confirm_act(ctx):
-    def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel
-
-    await ctx.send('Are you sure? y / n')
-    try:
-        confirm = await bot.wait_for('message', timeout=60, check=check)
-        confirm = confirm.content
-    except asyncio.TimeoutError:
-        await ctx.send('Timeout')
-        confirm = 'n'
-    return confirm == 'y'
-
-
 # Legal money income
 @commands.cooldown(1, cfg.CD_WORK, commands.BucketType.user)
 @bot.command(description='Legal way to earn money')
@@ -258,7 +259,25 @@ async def pay(ctx, user: discord.Member, amount):
 
 
 # Crime money income
-# TODO: Rob Command
+# TODO: Rob Command: improve rob chance system
+@commands.cooldown(1, 5, commands.BucketType.user)
+@bot.command(description='Steal the money from user. It has high level of risk!')
+async def rob(ctx, user: discord.Member):
+    user_bal = get_bal(user)
+    success = random.choice([True, False])
+    robbed = random.randrange(user_bal)
+    if success:
+        trans_money(ctx.author, robbed)
+        trans_money(user, -robbed)
+        embed = discord.Embed(title="Success",
+                              description=f"Robbed for {COIN} {'{:,}'.format(robbed)}", color=0x00AA00)
+        await ctx.send(embed=embed)
+    else:
+        trans_money(ctx.author, -robbed)
+        embed = discord.Embed(title="Success",
+                              description=f"You've been fined for {COIN} {'{:,}'.format(robbed)}", color=0xAA0000)
+        await ctx.send(embed=embed)
+
 
 # Games
 @commands.cooldown(1, cfg.CD_TOSS, commands.BucketType.user)
@@ -413,24 +432,24 @@ async def buy_market_item(ctx, item_id, quantity: int = 1):
 @bot.command(description="Use item to get all its benefits", aliases=['use-item'])
 async def use_item(ctx, item_id: int, amount: int):
     try:
-        item_type = cursor.execute(f"SELECT Type FROM 'u{ctx.author.id}' WHERE Item_id = ?", [item_id]).fetchone()[0]
-        item_count = cursor.execute(f"SELECT Quantity FROM 'u{ctx.author.id}' WHERE Item_id = ?", [item_id]).fetchone()[0]
+        i_type = cursor.execute(f"SELECT Type FROM 'u{ctx.author.id}' WHERE Item_id = ?", [item_id]).fetchone()[0]
+        i_count = cursor.execute(f"SELECT Quantity FROM 'u{ctx.author.id}' WHERE Item_id = ?", [item_id]).fetchone()[0]
     except TypeError:
         await ctx.send(f"Item not found")
         return
-    match item_type:
+    match i_type:
         case 'EXP':
             trans_exp(ctx.author, amount * 100)
         case _:
             await ctx.send("You can't use this item")
             return
-    if item_count >= amount:
+    if i_count >= amount:
         cursor.execute(f"UPDATE 'u{ctx.author.id}' SET Quantity = Quantity - {amount} WHERE Item_id = {item_id}")
-        item_count -= amount
+        i_count -= amount
     else:
         await ctx.send("You don't have so many items")
         return
-    if item_count == 0:
+    if i_count == 0:
         cursor.execute(f"DELETE FROM 'u{ctx.author.id}' WHERE Item_id = {item_id}")
     db.commit()
     await ctx.send("Success")
@@ -482,6 +501,22 @@ async def play(ctx):  # Some patriotic music
         await vc.disconnect()
     except AttributeError:
         await ctx.send("You must join in voice channel to use this command")
+
+
+# graphics
+
+
+
+@bot.command()
+async def person(ctx):
+    msg = await ctx.send("Getting image..")
+    async with aiohttp.ClientSession() as session:
+        async with session.get('https://thispersondoesnotexist.com/image') as resp:
+            if resp.status != 200:
+                return await ctx.send('Could not download file...')
+            data = io.BytesIO(await resp.read())
+            await ctx.send(file=discord.File(data, 'cool_image.png'))
+            await msg.delete()
 
 
 bot.run(cfg.TOKEN)
