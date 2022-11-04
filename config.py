@@ -12,7 +12,7 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS users (
 )""")
 db.commit()
 
-TOKEN = 'There was a token' # old taken was changed
+TOKEN = 'There was a token' # old token was changed
 
 PREFIX = ['!', '$']
 GUILD_ID = 0
