@@ -7,8 +7,6 @@ import random
 import asyncio
 import io
 import aiohttp
-import os
-from datetime import datetime
 
 
 # Commands
@@ -504,9 +502,6 @@ async def play(ctx):  # Some patriotic music
 
 
 # graphics
-
-
-
 @bot.command()
 async def person(ctx):
     msg = await ctx.send("Getting image..")
