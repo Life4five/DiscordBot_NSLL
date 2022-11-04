@@ -12,12 +12,12 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS users (
 )""")
 db.commit()
 
-TOKEN = 'OTUwMDAyMDAzODg1NTU1Nzky.GhVKjz.PycQl0afPHDao6qXPWFWgjej9n74QUKmTV52kE'
+TOKEN = 'There was a token'
 
 PREFIX = ['!', '$']
-GUILD_ID = 606208697328467969
-SUPERADMIN_ID = 412488420460462091  # For superpower commands
-SYSTEM_CHANNEL_ID = 815611328323911721  # channel where the messages will be sent ## admin-chat
+GUILD_ID = 0
+SUPERADMIN_ID = 0  # For superpower commands
+SYSTEM_CHANNEL_ID = 0  # channel where the messages will be sent ## admin-chat
 CURRENCY_SYMBOL = ':coin:'
 
 # Economy and commands cooldown (s)
